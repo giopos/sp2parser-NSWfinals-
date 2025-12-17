@@ -104,15 +104,19 @@ def parse_event_header(line: str) -> Optional[Tuple[int, str, str, str]]:
     """
     Example:
       Event 1  Girls 15 & Over 50 LC Meter Freestyle
+      Event 57A Girls 15 & Over 50 LC Meter Breaststroke Super Final
     Returns:
       (1, 'W', '50FS', '15 & Over')
+      (57, 'W', '50BR', '15 & Over')
     """
     line = re.sub(r"\s+", " ", line.strip())
-    m = re.match(r"^Event\s+(\d+)\s+(Girls|Women|Boys|Men|Mixed)\s+(.+)$", line, re.IGNORECASE)
+    m = re.match(r"^Event\s+(\d+[A-Za-z]*)\s+(Girls|Women|Boys|Men|Mixed)\s+(.+)$", line, re.IGNORECASE)
     if not m:
         return None
 
-    number = int(m.group(1))
+    # Extract numeric part only (e.g., "57A" -> 57)
+    number_str = m.group(1)
+    number = int(re.match(r"(\d+)", number_str).group(1))
     gender_word = m.group(2).lower()
     gender = {"girls":"W","women":"W","boys":"M","men":"M","mixed":"X"}.get(gender_word, "")
 
@@ -199,9 +203,10 @@ def parse_heat_label(line: str) -> Optional[str]:
     "Final  1a  Super Final" -> "1a Super Final"
     "Final  1b  15 Year Olds" -> "1b"
     "Heat 2" -> "2"
+    "Super Final 57a" -> "57a"
     """
     line = re.sub(r"\s+", " ", line.strip())
-    m = re.match(r"^(Final|Heat)\s+(.+)$", line, re.IGNORECASE)
+    m = re.match(r"^(Final|Heat|Super Final)\s+(.+)$", line, re.IGNORECASE)
     if not m:
         return None
     return clean_heat_label(m.group(2).strip())
