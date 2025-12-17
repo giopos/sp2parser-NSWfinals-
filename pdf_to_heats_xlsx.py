@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Swim meet PDF (program / heats) -> Excel template generator
-
+#version2
 Updated behaviours
 - Main 'Heats' sheet excludes Alternates entirely.
 - All alternates are collected into a separate sheet: 'Alternates'.
