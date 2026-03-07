@@ -28,6 +28,27 @@ from openpyxl.utils import get_column_letter
 
 AGE_PAT = re.compile(r"^(\d{1,2})$")
 
+# Age-group snippets can move around between program templates.
+# We detect them with a permissive matcher so headers like:
+#   "Girls 50 LC Meter Freestyle 15 Yrs & Over"
+# are still parsed correctly.
+AGE_GROUP_SNIPPET_PAT = re.compile(
+    r"\b(?:"
+    r"Open"
+    r"|All\s+Ages"
+    r"|\d{1,2}\s*(?:-|to)\s*\d{1,2}\s*(?:Years?|Yrs?)?(?:\s*Olds?)?"
+    r"|\d{1,2}\s*(?:Years?|Yrs?)\s*(?:&|and)\s*(?:Over|Under)"
+    r"|\d{1,2}\s*(?:&|and)\s*(?:Over|Under)"
+    r"|\d{1,2}\s*(?:Years?|Yrs?)\s*(?:Olds?|Old)?|\d{1,2}\s*Y/?O"
+    r")\b",
+    flags=re.IGNORECASE,
+)
+
+EVENT_QUALIFIER_PAT = re.compile(
+    r"\b(?:Super\s+Final|Final|Timed\s+Final|Swim\s*Off|Swim-?off)\b",
+    flags=re.IGNORECASE,
+)
+
 # Optional safety cap on how many heats/finals we keep per event.
 # Set to None for unlimited.
 # Example: MAX_HEATS_PER_EVENT = 3
@@ -122,16 +143,48 @@ def parse_event_header(line: str) -> Optional[Tuple[int, str, str, str]]:
 
     rest = m.group(3).strip()
 
-    # Find distance + stroke at end: "<dist> LC Meter <stroke>"
-    m2 = re.search(r"(\d+)\s+LC\s+Meter\s+(.+)$", rest, re.IGNORECASE)
+    def find_age_group(text: str) -> str:
+        # Prefer the longest match to avoid partial captures like "15 Years"
+        # when "15 Years & Over" is also present.
+        matches = list(AGE_GROUP_SNIPPET_PAT.finditer(text))
+        if not matches:
+            return ""
+        best = max(matches, key=lambda m: len(m.group(0)))
+        return re.sub(r"\s+", " ", best.group(0)).strip(" ,;:-()")
+
+    # Find distance + stroke at end. Accept common pool/units variants.
+    m2 = re.search(
+        r"(\d+)\s+(?:(?:LCM?|SCM?|Long\s+Course|Short\s+Course)\s+)?Met(?:er|re)s?\s+(.+)$",
+        rest,
+        re.IGNORECASE,
+    )
     if not m2:
-        # fallback: try "Meter" without LC
-        m2 = re.search(r"(\d+)\s+Meter\s+(.+)$", rest, re.IGNORECASE)
+        # Compact unit style: "50m Freestyle"
+        m2 = re.search(r"(\d+)m\s+(.+)$", rest, re.IGNORECASE)
+    if not m2:
+        # Pool code without explicit meter word: "50 LCM Freestyle"
+        m2 = re.search(r"(\d+)\s+(?:LCM?|SCM?)\s+(.+)$", rest, re.IGNORECASE)
     if not m2:
         return number, gender, rest.upper(), ""  # worst-case fallback
 
     dist = m2.group(1)
-    stroke_raw = re.sub(r"\s+", " ", m2.group(2).strip())
+    tail = re.sub(r"\s+", " ", m2.group(2).strip())
+
+    before_dist = rest[:m2.start()].strip()
+
+    # Age-group text may appear either before the distance or as a suffix in `tail`.
+    age_group = find_age_group(before_dist)
+    if not age_group:
+        age_group = find_age_group(tail)
+    if not age_group:
+        age_group = before_dist
+
+    stroke_raw = tail
+    if age_group:
+        # Remove age-group snippet from stroke side if it was captured there.
+        stroke_raw = re.sub(re.escape(age_group), "", stroke_raw, flags=re.IGNORECASE)
+    stroke_raw = EVENT_QUALIFIER_PAT.sub("", stroke_raw)
+    stroke_raw = re.sub(r"\s+", " ", stroke_raw).strip()
 
     # Multi-class events sometimes appear as e.g. "IM Multi-Class".
     # We want: "200IM MC" (not "200IMMULTI-CLASS").
@@ -141,7 +194,6 @@ def parse_event_header(line: str) -> Optional[Tuple[int, str, str, str]]:
     stroke = re.sub(r"\bmulti\s*-?\s*class\b", "", stroke_raw, flags=re.IGNORECASE).strip()
     stroke = re.sub(r"\s+", " ", stroke)
 
-    age_group = rest[:m2.start()].strip()  # everything before distance
     event_code = f"{dist}{stroke_to_code(stroke)}" + (" MC" if is_multiclass else "")
     return number, gender, event_code, age_group
 
@@ -168,17 +220,17 @@ def clean_heat_label(label: str) -> str:
     # leaving behind a stray "12".
     patterns = [
         # 12-13 Years & Old / 12-16 Years Olds / 12 - 13 Years Old
-        r"\b\d{1,2}\s*-\s*\d{1,2}\s*Years?\s*(?:&|and)?\s*Olds?\b",
+        r"\b\d{1,2}\s*-\s*\d{1,2}\s*(?:Years?|Yrs?)\s*(?:&|and)?\s*Olds?\b",
 
         # Some PDFs render as: "12-16 Years" (no Old/Over word)
-        r"\b\d{1,2}\s*-\s*\d{1,2}\s*Years?\b",
+        r"\b\d{1,2}\s*-\s*\d{1,2}\s*(?:Years?|Yrs?)\b",
 
         # 17 Years & Over / 17 Years and Over
-        r"\b\d{1,2}\s*Years?\s*(?:&|and)\s*(?:Over|Under)\b",
+        r"\b\d{1,2}\s*(?:Years?|Yrs?)\s*(?:&|and)\s*(?:Over|Under)\b",
         r"\b\d{1,2}\s*(?:&|and)\s*(?:Over|Under)\b",
 
         # 15 Year Olds / 15 Years Old
-        r"\b\d{1,2}\s*Years?\s*Olds?\b",
+        r"\b\d{1,2}\s*(?:Years?|Yrs?)\s*Olds?\b",
 
         # Some PDFs render as: "Years & Over" without the preceding number token
         r"\bYears?\s*(?:&|and)\s*(?:Over|Under)\b",
@@ -206,17 +258,19 @@ def parse_heat_label(line: str) -> Optional[str]:
     "Super Final 57a" -> "57a"
     """
     line = re.sub(r"\s+", " ", line.strip())
-    m = re.match(r"^(Final|Heat|Super Final)\s+(.+)$", line, re.IGNORECASE)
+    m = re.match(r"^(Final|Heat|Super\s+Final|Timed\s+Final|Swim\s*Off|Swim-?off)\s+(.+)$", line, re.IGNORECASE)
     if not m:
         return None
     return clean_heat_label(m.group(2).strip())
 
 def parse_lane_line(line: str) -> Optional[Tuple[int, str]]:
     line = line.strip()
-    m = re.match(r"^([0-9])\s+(.*)$", line)
+    m = re.match(r"^(\d{1,2})\s+(.*)$", line)
     if not m:
         return None
     lane = int(m.group(1))
+    if lane < 0 or lane > 10:
+        return None
     rest = m.group(2).strip()
     tokens = rest.split()
 
