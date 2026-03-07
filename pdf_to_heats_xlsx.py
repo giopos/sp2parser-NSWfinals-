@@ -126,9 +126,11 @@ def parse_event_header(line: str) -> Optional[Tuple[int, str, str, str]]:
     Example:
       Event 1  Girls 15 & Over 50 LC Meter Freestyle
       Event 57A Girls 15 & Over 50 LC Meter Breaststroke Super Final
+      Event 16 Men 4x100 LC Meter Medley Relay
     Returns:
       (1, 'W', '50FS', '15 & Over')
       (57, 'W', '50BR', '15 & Over')
+      (16, 'M', '4x100IM', '')
     """
     line = re.sub(r"\s+", " ", line.strip())
     m = re.match(r"^Event\s+(\d+[A-Za-z]*)\s+(Girls|Women|Boys|Men|Mixed)\s+(.+)$", line, re.IGNORECASE)
@@ -151,6 +153,21 @@ def parse_event_header(line: str) -> Optional[Tuple[int, str, str, str]]:
             return ""
         best = max(matches, key=lambda m: len(m.group(0)))
         return re.sub(r"\s+", " ", best.group(0)).strip(" ,;:-()")
+
+    # ------------------------------------------------------------------ #
+    # Relay detection: "4x100 LC Meter Medley Relay" / "4 x 200 LC Meter Freestyle Relay"
+    # ------------------------------------------------------------------ #
+    relay_m = re.match(
+        r"^(4\s*[xX]\s*\d+)\s+(?:LC\s+)?Met(?:er|re)\s+(.+?)\s+Relay\b",
+        rest, re.IGNORECASE
+    )
+    if relay_m:
+        relay_dist = re.sub(r"\s+", "", relay_m.group(1)).lower()  # "4x100"
+        relay_stroke_raw = relay_m.group(2).strip()
+        # Medley relay -> IM, Freestyle relay -> FS, etc.
+        relay_code = f"{relay_dist}{stroke_to_code(relay_stroke_raw)}"
+        age_group = find_age_group(rest)
+        return number, gender, relay_code, age_group
 
     # Find distance + stroke at end: "<dist> LC Meter/Metre <stroke>"
     m2 = re.search(r"(\d+)\s+LC\s+Met(?:er|re)\s+(.+)$", rest, re.IGNORECASE)
@@ -248,9 +265,28 @@ def parse_heat_label(line: str) -> Optional[str]:
     "Final  1a  Super Final" -> "1a Super Final"
     "Final  1b  15 Year Olds" -> "1b"
     "Heat 2" -> "2"
+    "Heat 1 of 2 Timed Finals" -> "1 of 2 Timed Finals"
     "Super Final 57a" -> "57a"
+    "A - Final" -> "A Final"
+    "B - Final" -> "B Final"
+    "Final" (standalone) -> "Final"
     """
     line = re.sub(r"\s+", " ", line.strip())
+
+    # A/B/C/D final patterns like "A - Final" or "B Final"
+    m_ab = re.match(r"^([A-D])\s*-?\s*Final$", line, re.IGNORECASE)
+    if m_ab:
+        return f"{m_ab.group(1).upper()} Final"
+
+    # "1 of 2 Timed Finals" or "Heat 1 of 3 Timed Finals"
+    m_timed = re.match(r"^(?:Heat\s+)?(\d+\s+of\s+\d+\s+Timed\s+Finals?)$", line, re.IGNORECASE)
+    if m_timed:
+        return m_timed.group(1).strip()
+
+    # Standalone "Final" (no qualifier after it)
+    if re.match(r"^Final$", line, re.IGNORECASE):
+        return "Final"
+
     m = re.match(r"^(Final|Heat|Super\s+Final|Timed\s+Final|Swim\s*Off|Swim-?off)\s+(.+)$", line, re.IGNORECASE)
     if not m:
         return None
@@ -455,12 +491,18 @@ def parse_pdf(pdf_source: Union[str, Path, BinaryIO]) -> Tuple[str, List[Event],
 
             low = line.lower()
 
-            # skip boilerplate
+            # skip boilerplate / column-header rows
             if low.startswith("lane ") or low.startswith("name ") or low.startswith("age ") or low.startswith("team "):
                 continue
             if low.startswith("finals program"):
                 continue
             if re.match(r"^\d{4}-\d{2}\b", line):
+                continue
+            # relay-table column headers  e.g. "Lane Team Relay Seed Time Finals Place"
+            if re.match(r"^lane\s+team\b", low):
+                continue
+            # trailing score/place column headers that appear in finals tables
+            if re.match(r"^(?:seed\s+time|prelims?|finals?\s+place|relay\s+seed)\b", low):
                 continue
 
             # alternates heading
