@@ -152,18 +152,11 @@ def parse_event_header(line: str) -> Optional[Tuple[int, str, str, str]]:
         best = max(matches, key=lambda m: len(m.group(0)))
         return re.sub(r"\s+", " ", best.group(0)).strip(" ,;:-()")
 
-    # Find distance + stroke at end. Accept common pool/units variants.
-    m2 = re.search(
-        r"(\d+)\s+(?:(?:LCM?|SCM?|Long\s+Course|Short\s+Course)\s+)?Met(?:er|re)s?\s+(.+)$",
-        rest,
-        re.IGNORECASE,
-    )
+    # Find distance + stroke at end: "<dist> LC Meter/Metre <stroke>"
+    m2 = re.search(r"(\d+)\s+LC\s+Met(?:er|re)\s+(.+)$", rest, re.IGNORECASE)
     if not m2:
-        # Compact unit style: "50m Freestyle"
-        m2 = re.search(r"(\d+)m\s+(.+)$", rest, re.IGNORECASE)
-    if not m2:
-        # Pool code without explicit meter word: "50 LCM Freestyle"
-        m2 = re.search(r"(\d+)\s+(?:LCM?|SCM?)\s+(.+)$", rest, re.IGNORECASE)
+        # fallback: try Meter/Metre without LC
+        m2 = re.search(r"(\d+)\s+Met(?:er|re)\s+(.+)$", rest, re.IGNORECASE)
     if not m2:
         return number, gender, rest.upper(), ""  # worst-case fallback
 
