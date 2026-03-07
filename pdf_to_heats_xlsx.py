@@ -213,17 +213,17 @@ def clean_heat_label(label: str) -> str:
     # leaving behind a stray "12".
     patterns = [
         # 12-13 Years & Old / 12-16 Years Olds / 12 - 13 Years Old
-        r"\b\d{1,2}\s*-\s*\d{1,2}\s*Years?\s*(?:&|and)?\s*Olds?\b",
+        r"\b\d{1,2}\s*-\s*\d{1,2}\s*(?:Years?|Yrs?)\s*(?:&|and)?\s*Olds?\b",
 
         # Some PDFs render as: "12-16 Years" (no Old/Over word)
-        r"\b\d{1,2}\s*-\s*\d{1,2}\s*Years?\b",
+        r"\b\d{1,2}\s*-\s*\d{1,2}\s*(?:Years?|Yrs?)\b",
 
         # 17 Years & Over / 17 Years and Over
-        r"\b\d{1,2}\s*Years?\s*(?:&|and)\s*(?:Over|Under)\b",
+        r"\b\d{1,2}\s*(?:Years?|Yrs?)\s*(?:&|and)\s*(?:Over|Under)\b",
         r"\b\d{1,2}\s*(?:&|and)\s*(?:Over|Under)\b",
 
         # 15 Year Olds / 15 Years Old
-        r"\b\d{1,2}\s*Years?\s*Olds?\b",
+        r"\b\d{1,2}\s*(?:Years?|Yrs?)\s*Olds?\b",
 
         # Some PDFs render as: "Years & Over" without the preceding number token
         r"\bYears?\s*(?:&|and)\s*(?:Over|Under)\b",
@@ -251,17 +251,19 @@ def parse_heat_label(line: str) -> Optional[str]:
     "Super Final 57a" -> "57a"
     """
     line = re.sub(r"\s+", " ", line.strip())
-    m = re.match(r"^(Final|Heat|Super Final)\s+(.+)$", line, re.IGNORECASE)
+    m = re.match(r"^(Final|Heat|Super\s+Final|Timed\s+Final|Swim\s*Off|Swim-?off)\s+(.+)$", line, re.IGNORECASE)
     if not m:
         return None
     return clean_heat_label(m.group(2).strip())
 
 def parse_lane_line(line: str) -> Optional[Tuple[int, str]]:
     line = line.strip()
-    m = re.match(r"^([0-9])\s+(.*)$", line)
+    m = re.match(r"^(\d{1,2})\s+(.*)$", line)
     if not m:
         return None
     lane = int(m.group(1))
+    if lane < 0 or lane > 10:
+        return None
     rest = m.group(2).strip()
     tokens = rest.split()
 
